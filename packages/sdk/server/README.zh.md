@@ -6,7 +6,7 @@
 
 ## 组装
 
-`inject: ['agents']`。服务器按 `sessionId` 获取或创建一个 agent。只有服务对生命周期建立快照时记录的 `local` 标志为 true，服务器才会转发 subagent 完成事件；提供方名称、子级 id 和持久化谱系均不能证明本地性。已注册的适配器优先；尚无适配器负责的 `deepseek-official` 路由会挂载 `dsh-llm-deepseek`，任何其他尚无适配器负责的提供方都会导致初始化失败。其他能力由外围 `cordis.yml` 提供。
+`inject: ['agents']`。服务器为每个 `sessionId` 保留一个实时 agent；可选的 `ctx.sessionPersistence` 让同一 id 能在进程重启后重新打开持久化状态。只有服务对生命周期建立快照时记录的 `local` 标志为 true，服务器才会转发 subagent 完成事件；提供方名称、子级 id 和持久化谱系均不能证明本地性。已注册的适配器优先；尚无适配器负责的 `deepseek-official` 路由会挂载 `dsh-llm-deepseek`，任何其他尚无适配器负责的提供方都会导致初始化失败。其他能力由外围 `cordis.yml` 提供。
 
 ## 配置
 
@@ -22,7 +22,7 @@ Stdout 只承载 JSON-RPC 帧。部署不得组合 stdout logger；诊断应写�
 
 ## 协议说明
 
-`initialize` 是运行时就绪边界：服务器由 Loader 组合挂载时，会等待当前插件树完成所有加载任务后再响应，因此首次提示词能够看到 MCP 初始工具发现等异步同级能力。没有 Loader 的手工组装上下文仍可立即使用。`initialize.serverInfo.name` 的协议稳定值为 `deepseek-harness-sdk-runtime`。可选的正整数 `initialize.maxTokens` 会成为每个 SDK 创建的 agent 及其进程内后代的请求输出上限；非法值会使初始化失败，省略时则不发送 SDK 上限，并应用所选适配器或提供方路由的默认值。`session/prompt` 将一条带标识的用户消息排入队列，并立即返回 `{ messageId }`。服务器将每个持久事实作为 `session.event` 流式发出，并将整个 agent 生命周期的每次状态转换作为 `session.status` 发出；它不会把某条助手消息或 `turn/end` 归属于该提示词。同一会话上的独立请求可以继续排入更多工作。持久化根目录和 persona 由 `cordis.yml` 提供。
+`initialize` 是运行时就绪边界：服务器由 Loader 组合挂载时，会等待当前插件树完成所有加载任务后再响应，因此首次提示词能够看到 MCP 初始工具发现等异步同级能力。没有 Loader 的手工组装上下文仍可立即使用。`initialize.serverInfo.name` 的协议稳定值为 `deepseek-harness-sdk-runtime`。可选的正整数 `initialize.maxTokens` 会成为每个 SDK 创建的 agent 及其进程内后代的请求输出上限；非法值会使初始化失败，省略时则不发送 SDK 上限，并应用所选适配器或提供方路由的默认值。对于某个 id 的首个 `session/prompt`，配置了持久化时，服务器使用原生 `ctx.agents.resume()`；只有 `ctx.sessionPersistence.list()` 确认不存在持久化产物时，才会回退到 `ctx.agents.create()`。如果恢复失败且该 id 仍在列表中，请求会失败，而不会替换其历史。未配置持久化时，首条提示词会创建进程本地会话。`session/prompt` 将一条带标识的用户消息排入队列，并立即返回 `{ messageId }`。服务器将每个持久事实作为 `session.event` 流式发出，并将整个 agent 生命周期的每次状态转换作为 `session.status` 发出；它不会把某条助手消息或 `turn/end` 归属于该提示词。同一会话上的独立请求可以继续排入更多工作。持久化根目录和 persona 由 `cordis.yml` 提供。
 
 ## 模型体验
 
@@ -34,7 +34,7 @@ Stdout 只承载 JSON-RPC 帧。部署不得组合 stdout logger；诊断应写�
 
 #### Token 影响
 
-依数据而定的用户消息 token 会进入保留的会话历史，并在后续轮次中重复发送，直至另一个包将其压缩（compaction）。JSON-RPC 帧、会话通知和服务器内部记录不会增加模型上下文 token。
+依数据而定的用户消息 token 会进入保留的会话历史，并在后续轮次中重复发送，包括在新进程中完成原生恢复之后，直至另一个包将其压缩（compaction）。JSON-RPC 帧、会话通知和服务器内部记录不会增加模型上下文 token。
 
 #### KV Cache 影响
 
