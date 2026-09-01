@@ -31,7 +31,7 @@ import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import { deadline, idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { AnonymousUserId } from '@deepseek-ai/dsh-anonymous-user-id'
 import { serializeRequest, serializeRequestWithImages } from './serialize.ts'
-import type { ImageWireLocation, RequestDefaults } from './serialize.ts'
+import type { ImageWireLocation, ResolvedRequestDefaults } from './serialize.ts'
 import { DeepSeekFileStore } from './file-store.ts'
 import type { DeepSeekFilePolicy } from './file-store.ts'
 import type { DeepSeekFileId } from './file-id.ts'
@@ -77,8 +77,8 @@ export interface DeepSeekConnectionOptions {
    * only this name — a literal key is not a configuration value.
    */
   apiKeyEnv: CredentialRef
-  /** Request defaults applied to every call (thinking mode, effort). */
-  defaults: RequestDefaults
+  /** Resolved request dialect and optional DeepSeek thinking defaults applied to every call. */
+  defaults: ResolvedRequestDefaults
   /** Default per-request output cap; explicit request values win. */
   maxTokens: number
   /** Positive context capacity used when the selected model has no exact value. */
@@ -396,25 +396,27 @@ export class DeepSeekAdapter extends LlmAdapter {
         : modelInfo(provider, configured),
       context: { contextWindow },
       defaultMaxTokens: configured?.maxTokens ?? connection.maxTokens,
-      ...connection.defaults.thinking === 'disabled'
-        ? {
-          reasoning: {
-            efforts: OFF_ONLY_REASONING_EFFORTS,
-            defaultEffort: OFF_REASONING_EFFORT,
+      ...connection.defaults.wireDialect === 'openai-compatible'
+        ? {}
+        : connection.defaults.thinking === 'disabled'
+          ? {
+            reasoning: {
+              efforts: OFF_ONLY_REASONING_EFFORTS,
+              defaultEffort: OFF_REASONING_EFFORT,
+            },
+          }
+          : {
+            reasoning: {
+              efforts: REASONING_EFFORTS,
+              defaultEffort: connection.defaults.reasoningEffort === 'off'
+                ? OFF_REASONING_EFFORT
+                : connection.defaults.reasoningEffort === 'low'
+                  ? LOW_REASONING_EFFORT
+                  : connection.defaults.reasoningEffort === 'max'
+                    ? MAX_REASONING_EFFORT
+                    : HIGH_REASONING_EFFORT,
+            },
           },
-        }
-        : {
-          reasoning: {
-            efforts: REASONING_EFFORTS,
-            defaultEffort: connection.defaults.reasoningEffort === 'off'
-              ? OFF_REASONING_EFFORT
-              : connection.defaults.reasoningEffort === 'low'
-                ? LOW_REASONING_EFFORT
-                : connection.defaults.reasoningEffort === 'max'
-                  ? MAX_REASONING_EFFORT
-                  : HIGH_REASONING_EFFORT,
-          },
-        },
     }
   }
 

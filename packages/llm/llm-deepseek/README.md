@@ -16,6 +16,7 @@ The package root exposes the Cordis plugin contract and `DeepSeekAdapter`; wire 
   config:
     apiKeyEnv: DEEPSEEK_API_KEY  # default; resolved per request via ctx.credentials, then the environment
     baseURL: https://api.deepseek.com # optional; $DEEPSEEK_BASE_URL then the public API when omitted
+    wireDialect: deepseek    # optional; deepseek | openai-compatible; default is deepseek
     thinking: enabled        # optional; provider default is enabled
     reasoningEffort: high    # optional; off | low | high | max — omitted ⇒ high
     maxTokens: 256000        # optional positive per-request output cap; this is the default
@@ -68,6 +69,8 @@ Concurrent resolution of one scoped `variantId` shares one Files upload with wai
 
 The same exact-model result exposes ordered `off`, `low`, `high`, and `max` efforts under `reasoning` for every pass-through model when deployment policy permits thinking. `reasoningEffort` selects the deployment default and falls back to `high` when omitted. `agent/request` can replace it on each conversation step; the resolved value is logged in `request/header`. `low`, `high`, and `max` enable thinking and serialize as the same official top-level `reasoning_effort` value; adapter-owned `off` instead serializes `thinking.type: disabled` and omits `reasoning_effort`. An unsupported value fails with `UNSUPPORTED_REASONING_EFFORT` before network I/O.
 
+`wireDialect` defaults to `deepseek`. The `openai-compatible` dialect is for strict generic chat-completions gateways: model discovery publishes no reasoning capability or default, requests omit both `thinking` and `reasoning_effort`, and assistant history does not replay DeepSeek-only `reasoning_content`. Combining that dialect with `thinking` or `reasoningEffort` fails configuration resolution instead of silently accepting an ineffective policy.
+
 `thinking: disabled` is a deployment lock that publishes only `off` with `off` as its default. Omitting `reasoningEffort` or configuring it as `off` is valid; configuring `low`, `high`, or `max` fails plugin loading, and a direct per-request attempt to enable thinking fails before network I/O. A request with `GenerateOptions.purpose: 'session-title'` also forces thinking disabled and omits the already-resolved effort, reserving its bounded output for visible title text without changing conversation or compaction defaults.
 
 `streamIdleTimeoutMs` bounds each outstanding provider read, including the initial `fetch`, without counting time the consumer spends between chunks. DeepSeek SSE comments and successful file resolutions rearm an outstanding read as transport activity but never become `StreamChunk` values or session-log events. One stable abort signal reaches the request and body reader for the whole call; expiry stops the transport and throws `LlmError('TIMEOUT')`, while an earlier caller abort throws `LlmError('ABORTED')`. The adapter normally makes one chat request per `stream()` call and makes a second only for stale-file recovery. A file-resolution failure before the first chat sends one inline request. If replacement resolution fails after a stale-file response, the inline request is the one permitted retry. It registers the configured retry policy as provider metadata, and `dsh-llm-retry` separately executes that policy at durable agent-step boundaries.
@@ -93,6 +96,7 @@ DeepSeek request identity is separate from app attribution. After credential res
 ## Wire-format notes
 
 - Streaming only (`stream_options.include_usage` always on). `usage` may arrive attached to the finish chunk or as a trailing usage-only chunk — the translator defers both to `[DONE]`, so `usage` always precedes `finish` and nothing follows `finish`.
+- The `openai-compatible` wire dialect omits DeepSeek-only `thinking`, `reasoning_effort`, and assistant-history `reasoning_content` fields while preserving standard chat, tools, tool results, and streamed final responses.
 - The adapter-owned `off` effort maps to `thinking: {type: 'disabled'}` and never crosses the wire as `reasoning_effort: 'off'`.
 - The first thinking-mode chunk carries `reasoning_content: ""` — handled (no spurious reasoning block).
 - **Reasoning passback rule**: every assistant turn that carried reasoning serializes `reasoning_content` back in history. Thinking mode requires it on tool-call turns; DeepSeek ignores it elsewhere, while a gateway re-encoding the conversation for another vendor recovers that turn's upstream thinking signature by hashing the replayed text.

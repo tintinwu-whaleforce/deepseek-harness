@@ -16,6 +16,7 @@ harness LLM（大语言模型）seam 的 DeepSeek chat-completions 适配器：�
   config:
     apiKeyEnv: DEEPSEEK_API_KEY  # default; resolved per request via ctx.credentials, then the environment
     baseURL: https://api.deepseek.com # optional; $DEEPSEEK_BASE_URL then the public API when omitted
+    wireDialect: deepseek    # optional; deepseek | openai-compatible; default is deepseek
     thinking: enabled        # optional; provider default is enabled
     reasoningEffort: high    # optional; off | low | high | max — omitted ⇒ high
     maxTokens: 256000        # optional positive per-request output cap; this is the default
@@ -68,6 +69,8 @@ harness LLM（大语言模型）seam 的 DeepSeek chat-completions 适配器：�
 
 同一确切模型结果会在部署策略允许思考时，为每个原样传递模型在 `reasoning` 下公开有序的 `off`、`low`、`high` 和 `max` 推理（reasoning）强度。`reasoningEffort` 选择部署默认值，省略时回退为 `high`。`agent/request` 可以在每个会话步骤替换它；解析后的值会记录在 `request/header`。`low`、`high` 和 `max` 会启用思考，并以同名值序列化为官方顶层 `reasoning_effort`；适配器持有的 `off` 则序列化为 `thinking.type: disabled`，且省略 `reasoning_effort`。不支持的值会在网络 I/O 前以 `UNSUPPORTED_REASONING_EFFORT` 失败。
 
+`wireDialect` 默认为 `deepseek`。`openai-compatible` 方言用于严格的通用 chat-completions 网关：模型发现不会公布推理能力或默认值，请求会省略 `thinking` 与 `reasoning_effort`，assistant 历史也不会回传 DeepSeek 专用的 `reasoning_content`。把该方言与 `thinking` 或 `reasoningEffort` 组合使用会使配置解析失败，不会静默接受无效策略。
+
 `thinking: disabled` 是部署锁定：它只公布 `off`，并以 `off` 为默认值。省略 `reasoningEffort` 或将其配置为 `off` 均有效；配置 `low`、`high` 或 `max` 会使插件加载失败，直接按请求启用思考也会在网络 I/O 前失败。携带 `GenerateOptions.purpose: 'session-title'` 的请求也会强制禁用思考并省略已解析的推理强度，将有界输出保留给可见标题文本，不改变会话或压缩（compaction）默认值。
 
 `streamIdleTimeoutMs` 会限制每次未完成提供方读取，包括初始 `fetch`，但不计入消费方在分片间花费的时间。DeepSeek SSE 注释和成功的文件解析会作为传输活动使尚未完成的读取重新计时，但绝不会成为 `StreamChunk` 值或会话日志事件。同一个稳定的 abort 信号会在整个调用期间传递给请求与 body reader；过期会停止传输并抛出 `LlmError('TIMEOUT')`，较早的调用方 abort 则抛出 `LlmError('ABORTED')`。适配器通常每次 `stream()` 调用发起一次 chat 请求，只有失效文件恢复会发起第二次。首次 chat 前的文件解析失败会发送一次内联请求。如果失效文件响应后的替换解析失败，该内联请求就是唯一允许的重试。适配器把已配置重试策略注册为提供方元数据，再由 `dsh-llm-retry` 在持久化的 agent（智能体）步骤边界单独执行该策略。
@@ -93,6 +96,7 @@ DeepSeek 请求身份独立于应用归因。凭据解析成功后，每个提�
 ## 协议格式说明
 
 - 只支持流式输出（`stream_options.include_usage` 始终开启）。`usage` 可能附着在 finish 分片上，也可能作为尾随的纯 usage 分片到达；转换器会将两者都延迟到 `[DONE]`，因此 `usage` 始终位于 `finish` 之前，`finish` 之后不会出现任何内容。
+- `openai-compatible` 协议方言会省略 DeepSeek 专用的 `thinking`、`reasoning_effort` 与 assistant 历史 `reasoning_content` 字段，同时保留标准 chat、工具、工具结果与最终流式响应语义。
 - 适配器持有的 `off` 推理强度映射为 `thinking: {type: 'disabled'}`，绝不会以 `reasoning_effort: 'off'` 通过协议发送。
 - 第一个思考模式分片携带 `reasoning_content: ""`，系统会处理它（不会产生多余 reasoning 块）。
 - **推理回传规则**：每个携带推理内容的 assistant 轮次都会将 `reasoning_content` 序列化回历史。思考模式在工具调用轮次上必需它；DeepSeek 在其他轮次上会忽略它，而将该对话重新编码转发给其他厂商的网关，要靠对回传原文取哈希来恢复该轮次上游的思考签名。
